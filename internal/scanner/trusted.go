@@ -111,7 +111,7 @@ func (t *TrustedList) IsProcessTrusted(name string) bool {
 	defer t.mu.RUnlock()
 
 	for _, p := range t.Processes {
-		if strings.HasPrefix(name, p) {
+		if strings.EqualFold(name, p) {
 			return true
 		}
 	}
@@ -123,7 +123,7 @@ func (t *TrustedList) IsLaunchItemTrusted(name string) bool {
 	defer t.mu.RUnlock()
 
 	for _, l := range t.LaunchItems {
-		if strings.Contains(name, l) {
+		if strings.EqualFold(name, l) {
 			return true
 		}
 	}

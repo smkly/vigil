@@ -102,6 +102,46 @@ type model struct {
 	statusTime  time.Time
 }
 
+func (m *model) resetCursor() {
+	m.cursor = 0
+	m.scroll = 0
+}
+
+func (m model) clampedCursor(length int) int {
+	if length <= 0 {
+		return 0
+	}
+	if m.cursor < 0 {
+		return 0
+	}
+	if m.cursor >= length {
+		return length - 1
+	}
+	return m.cursor
+}
+
+func visibleRange(cursor, length, maxShow int) (int, int) {
+	if length == 0 {
+		return 0, 0
+	}
+	if maxShow < 1 {
+		maxShow = 1
+	}
+	start := 0
+	if cursor >= maxShow {
+		start = cursor - maxShow + 1
+	}
+	end := start + maxShow
+	if end > length {
+		end = length
+		start = end - maxShow
+		if start < 0 {
+			start = 0
+		}
+	}
+	return start, end
+}
+
 type tickMsg time.Time
 
 func tickCmd() tea.Cmd {
@@ -146,10 +186,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "tab", "right", "l":
 			m.activeTab = (m.activeTab + 1) % 4
-			m.scroll = 0
+			m.resetCursor()
 		case "shift+tab", "left", "h":
 			m.activeTab = (m.activeTab + 3) % 4
-			m.scroll = 0
+			m.resetCursor()
 		case "r":
 			return m, initialScan
 		case "j", "down":
@@ -166,10 +206,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.paused = !m.paused
 		case "1":
 			m.filter = "all"
+			m.resetCursor()
 		case "2":
 			m.filter = "outbound"
+			m.resetCursor()
 		case "3":
 			m.filter = "suspicious"
+			m.resetCursor()
 		}
 
 	case tea.WindowSizeMsg:
@@ -296,8 +339,9 @@ func (m *model) trustSelected() {
 	switch m.activeTab {
 	case tabNetwork:
 		filtered := m.filteredConnections()
-		if m.cursor >= 0 && m.cursor < len(filtered) {
-			proc := filtered[m.cursor].Process
+		cursor := m.clampedCursor(len(filtered))
+		if len(filtered) > 0 {
+			proc := filtered[cursor].Process
 			m.trusted.TrustProcess(proc)
 			m.trusted.Save()
 			m.statusMsg = "Trusted: " + proc
@@ -306,8 +350,9 @@ func (m *model) trustSelected() {
 			m.connections = scanner.ScanConnections()
 		}
 	case tabLaunchd:
-		if m.cursor >= 0 && m.cursor < len(m.launchItems) {
-			name := m.launchItems[m.cursor].Name
+		cursor := m.clampedCursor(len(m.launchItems))
+		if len(m.launchItems) > 0 {
+			name := m.launchItems[cursor].Name
 			m.trusted.TrustLaunchItem(name)
 			m.trusted.Save()
 			m.statusMsg = "Trusted: " + name
@@ -320,8 +365,9 @@ func (m *model) untrustSelected() {
 	switch m.activeTab {
 	case tabNetwork:
 		filtered := m.filteredConnections()
-		if m.cursor >= 0 && m.cursor < len(filtered) {
-			proc := filtered[m.cursor].Process
+		cursor := m.clampedCursor(len(filtered))
+		if len(filtered) > 0 {
+			proc := filtered[cursor].Process
 			m.trusted.UntrustProcess(proc)
 			m.trusted.Save()
 			m.statusMsg = "Untrusted: " + proc
@@ -329,8 +375,9 @@ func (m *model) untrustSelected() {
 			m.connections = scanner.ScanConnections()
 		}
 	case tabLaunchd:
-		if m.cursor >= 0 && m.cursor < len(m.launchItems) {
-			name := m.launchItems[m.cursor].Name
+		cursor := m.clampedCursor(len(m.launchItems))
+		if len(m.launchItems) > 0 {
+			name := m.launchItems[cursor].Name
 			m.trusted.UntrustLaunchItem(name)
 			m.trusted.Save()
 			m.statusMsg = "Untrusted: " + name
@@ -427,31 +474,14 @@ func (m model) renderNetwork(width int) string {
 	b.WriteString("\n")
 
 	// Clamp cursor
-	cursor := m.cursor
-	if cursor >= len(filtered) {
-		cursor = len(filtered) - 1
-	}
-	if cursor < 0 {
-		cursor = 0
-	}
+	cursor := m.clampedCursor(len(filtered))
 
 	// Scrollable window around cursor
 	maxShow := m.height - 16
 	if maxShow < 5 {
 		maxShow = 5
 	}
-	start := 0
-	if cursor >= maxShow {
-		start = cursor - maxShow + 1
-	}
-	end := start + maxShow
-	if end > len(filtered) {
-		end = len(filtered)
-		start = end - maxShow
-		if start < 0 {
-			start = 0
-		}
-	}
+	start, end := visibleRange(cursor, len(filtered), maxShow)
 
 	for idx := start; idx < end; idx++ {
 		c := filtered[idx]
@@ -558,26 +588,28 @@ func (m model) renderIOCs(width int) string {
 	if maxShow < 5 {
 		maxShow = 5
 	}
-	start := m.scroll
-	if start >= len(m.iocs) {
-		start = 0
-	}
-	end := start + maxShow
-	if end > len(m.iocs) {
-		end = len(m.iocs)
-	}
+	cursor := m.clampedCursor(len(m.iocs))
+	start, end := visibleRange(cursor, len(m.iocs), maxShow)
 
-	for _, ioc := range m.iocs[start:end] {
+	for idx := start; idx < end; idx++ {
+		ioc := m.iocs[idx]
+		prefix := "  "
+		if idx == cursor {
+			prefix = "▸ "
+		}
 		if ioc.Found {
-			b.WriteString(dangerStyle.Render(fmt.Sprintf("  ✗ FOUND  %s\n", ioc.Path)))
+			b.WriteString(dangerStyle.Render(fmt.Sprintf("%s✗ FOUND  %s\n", prefix, ioc.Path)))
 			b.WriteString(dangerStyle.Render(fmt.Sprintf("           %s\n", ioc.Detail)))
 		} else {
-			b.WriteString(fmt.Sprintf("  %s  %s\n", okStyle.Render("✓"), dimStyle.Render(ioc.Path)))
+			b.WriteString(fmt.Sprintf("%s%s  %s\n", prefix, okStyle.Render("✓"), dimStyle.Render(ioc.Path)))
 		}
 	}
 
 	if end < len(m.iocs) {
 		b.WriteString(dimStyle.Render(fmt.Sprintf("\n  ... %d more (j/k to scroll)", len(m.iocs)-end)))
+	}
+	if start > 0 {
+		b.WriteString(dimStyle.Render(fmt.Sprintf("  ↑ %d above", start)))
 	}
 
 	return b.String()
@@ -614,7 +646,15 @@ func (m model) renderLaunchd(width int) string {
 	}
 	b.WriteString("\n")
 
-	for idx, item := range m.launchItems {
+	maxShow := m.height - 14
+	if maxShow < 3 {
+		maxShow = 3
+	}
+	cursor := m.clampedCursor(len(m.launchItems))
+	start, end := visibleRange(cursor, len(m.launchItems), maxShow)
+
+	for idx := start; idx < end; idx++ {
+		item := m.launchItems[idx]
 		isSelected := idx == m.cursor
 		prefix := "  "
 		if isSelected {
@@ -636,6 +676,13 @@ func (m model) renderLaunchd(width int) string {
 		} else {
 			b.WriteString(fmt.Sprintf("%s%s  %s\n", prefix, okStyle.Render("✓"), dimStyle.Render(item.Name)))
 		}
+	}
+
+	if end < len(m.launchItems) {
+		b.WriteString(dimStyle.Render(fmt.Sprintf("\n  ... %d more (j/k to scroll)", len(m.launchItems)-end)))
+	}
+	if start > 0 {
+		b.WriteString(dimStyle.Render(fmt.Sprintf("  ↑ %d above", start)))
 	}
 
 	return b.String()
