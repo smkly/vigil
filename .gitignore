@@ -1,0 +1,6 @@
+vigil
+macguard
+*.exe
+.DS_Store
+mg
+.claude/
