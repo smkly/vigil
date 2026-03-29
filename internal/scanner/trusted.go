@@ -9,10 +9,10 @@ import (
 )
 
 type TrustedList struct {
-	Processes    []string `json:"processes"`
-	LaunchItems  []string `json:"launch_items"`
-	mu           sync.RWMutex
-	path         string
+	Processes   []string `json:"processes"`
+	LaunchItems []string `json:"launch_items"`
+	mu          sync.RWMutex
+	path        string
 }
 
 var trustedInstance *TrustedList

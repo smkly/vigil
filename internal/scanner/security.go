@@ -1,15 +1,16 @@
 package scanner
 
 import (
+	"fmt"
 	"os/exec"
 	"strings"
 )
 
 type SecurityCheck struct {
-	Name    string
-	Status  string
-	OK      bool
-	Detail  string
+	Name   string
+	Status string
+	OK     bool
+	Detail string
 }
 
 func ScanSecurity() []SecurityCheck {
@@ -36,32 +37,40 @@ func ScanSecurity() []SecurityCheck {
 func checkFirewall() []SecurityCheck {
 	var checks []SecurityCheck
 
-	out, _ := exec.Command("/usr/libexec/ApplicationFirewall/socketfilterfw", "--getglobalstate").Output()
-	s := strings.TrimSpace(string(out))
-	enabled := strings.Contains(s, "enabled")
-	checks = append(checks, SecurityCheck{
-		Name:   "Firewall",
-		Status: boolStatus(enabled),
-		OK:     enabled,
-		Detail: s,
-	})
+	s, err := commandOutput("/usr/libexec/ApplicationFirewall/socketfilterfw", "--getglobalstate")
+	if err != nil {
+		checks = append(checks, unknownCheck("Firewall", err))
+	} else {
+		enabled := strings.Contains(s, "enabled")
+		checks = append(checks, SecurityCheck{
+			Name:   "Firewall",
+			Status: boolStatus(enabled),
+			OK:     enabled,
+			Detail: s,
+		})
+	}
 
-	out, _ = exec.Command("/usr/libexec/ApplicationFirewall/socketfilterfw", "--getstealthmode").Output()
-	s = strings.TrimSpace(string(out))
-	stealth := strings.Contains(s, " on")
-	checks = append(checks, SecurityCheck{
-		Name:   "Stealth Mode",
-		Status: boolStatus(stealth),
-		OK:     stealth,
-		Detail: s,
-	})
+	s, err = commandOutput("/usr/libexec/ApplicationFirewall/socketfilterfw", "--getstealthmode")
+	if err != nil {
+		checks = append(checks, unknownCheck("Stealth Mode", err))
+	} else {
+		stealth := strings.Contains(s, " on")
+		checks = append(checks, SecurityCheck{
+			Name:   "Stealth Mode",
+			Status: boolStatus(stealth),
+			OK:     stealth,
+			Detail: s,
+		})
+	}
 
 	return checks
 }
 
 func checkSIP() SecurityCheck {
-	out, _ := exec.Command("csrutil", "status").Output()
-	s := strings.TrimSpace(string(out))
+	s, err := commandOutput("csrutil", "status")
+	if err != nil {
+		return unknownCheck("System Integrity Protection", err)
+	}
 	enabled := strings.Contains(s, "enabled")
 	return SecurityCheck{
 		Name:   "System Integrity Protection",
@@ -72,8 +81,10 @@ func checkSIP() SecurityCheck {
 }
 
 func checkFileVault() SecurityCheck {
-	out, _ := exec.Command("fdesetup", "status").Output()
-	s := strings.TrimSpace(string(out))
+	s, err := commandOutput("fdesetup", "status")
+	if err != nil {
+		return unknownCheck("FileVault", err)
+	}
 	on := strings.Contains(s, "On")
 	return SecurityCheck{
 		Name:   "FileVault",
@@ -84,8 +95,10 @@ func checkFileVault() SecurityCheck {
 }
 
 func checkGatekeeper() SecurityCheck {
-	out, _ := exec.Command("spctl", "--status").Output()
-	s := strings.TrimSpace(string(out))
+	s, err := commandOutput("spctl", "--status")
+	if err != nil {
+		return unknownCheck("Gatekeeper", err)
+	}
 	enabled := strings.Contains(s, "enabled")
 	return SecurityCheck{
 		Name:   "Gatekeeper",
@@ -97,14 +110,38 @@ func checkGatekeeper() SecurityCheck {
 
 func checkRemoteLogin() SecurityCheck {
 	// Check if sshd is loaded
-	out, _ := exec.Command("launchctl", "print", "system/com.apple.sshd").CombinedOutput()
+	out, err := exec.Command("launchctl", "print", "system/com.apple.sshd").CombinedOutput()
 	s := strings.TrimSpace(string(out))
 	disabled := strings.Contains(s, "Could not find service")
+	if err != nil && !disabled {
+		return unknownCheck("Remote Login (SSH)", fmt.Errorf("%v: %s", err, s))
+	}
 	return SecurityCheck{
 		Name:   "Remote Login (SSH)",
 		Status: ternary(disabled, "Off", "On"),
 		OK:     disabled, // SSH off is safer
 		Detail: ternary(disabled, "SSH server is not running", "SSH server is active — disable if not needed"),
+	}
+}
+
+func commandOutput(name string, args ...string) (string, error) {
+	out, err := exec.Command(name, args...).CombinedOutput()
+	s := strings.TrimSpace(string(out))
+	if err != nil {
+		if s == "" {
+			return "", err
+		}
+		return s, fmt.Errorf("%v: %s", err, s)
+	}
+	return s, nil
+}
+
+func unknownCheck(name string, err error) SecurityCheck {
+	return SecurityCheck{
+		Name:   name,
+		Status: "Unknown",
+		OK:     false,
+		Detail: err.Error(),
 	}
 }
 

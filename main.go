@@ -655,7 +655,7 @@ func (m model) renderLaunchd(width int) string {
 
 	for idx := start; idx < end; idx++ {
 		item := m.launchItems[idx]
-		isSelected := idx == m.cursor
+		isSelected := idx == cursor
 		prefix := "  "
 		if isSelected {
 			prefix = "▸ "
