@@ -137,6 +137,7 @@ var knownSafePrefixes = []string{
 	"newsd",
 	"News",
 	"CategoriesService",
+	"assistantd",
 	"Raycast",
 	"WeatherWidget",
 	"replicatord",
