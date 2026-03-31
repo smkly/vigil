@@ -62,6 +62,74 @@ func suspiciousBundleIDs() []string {
 	}
 }
 
+// npmSupplyChainPaths returns paths to check for npm supply chain attacks.
+// Scans common project directories for the malicious plain-crypto-js package
+// injected via compromised axios versions (2026-03-31).
+func npmSupplyChainPaths(home string) []IOCResult {
+	var results []IOCResult
+
+	// The malicious hidden dependency that shouldn't exist
+	maliciousPkg := "node_modules/plain-crypto-js"
+
+	// Common project root directories to scan
+	searchRoots := []string{
+		filepath.Join(home, "Developer"),
+		filepath.Join(home, "Projects"),
+		filepath.Join(home, "Code"),
+		filepath.Join(home, "src"),
+		filepath.Join(home, "work"),
+	}
+
+	for _, root := range searchRoots {
+		if _, err := os.Stat(root); err != nil {
+			continue
+		}
+
+		// Walk one level deep for project dirs, then check node_modules
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			candidate := filepath.Join(root, e.Name(), maliciousPkg)
+			info, err := os.Lstat(candidate)
+			if err == nil {
+				r := IOCResult{
+					Path:  candidate,
+					Found: true,
+				}
+				if info.IsDir() {
+					r.Detail = "npm supply chain: plain-crypto-js (axios backdoor)"
+				} else {
+					r.Detail = "npm supply chain: plain-crypto-js (" + byteSize(info.Size()) + ")"
+				}
+				results = append(results, r)
+			}
+		}
+	}
+
+	// Also check for the payload staging artifacts in temp dirs
+	tempPaths := []string{
+		"/tmp/setup.js",
+		"/private/tmp/setup.js",
+	}
+	for _, p := range tempPaths {
+		r := IOCResult{Path: p}
+		info, err := os.Lstat(p)
+		if err == nil {
+			r.Found = true
+			r.Detail = "npm supply chain staging file (" + byteSize(info.Size()) + ")"
+		}
+		results = append(results, r)
+	}
+
+	return results
+}
+
 // ScanIOCs checks for known file paths on the system.
 func ScanIOCs() []IOCResult {
 	u, _ := user.Current()
@@ -99,6 +167,9 @@ func ScanIOCs() []IOCResult {
 			}
 		}
 	}
+
+	// npm supply chain attack checks
+	results = append(results, npmSupplyChainPaths(home)...)
 
 	return results
 }

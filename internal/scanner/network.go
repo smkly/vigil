@@ -56,10 +56,13 @@ func b64(s string) string {
 
 func knownC2() []string {
 	return []string{
+		// BlueNoroff
 		b64("ZmlsZS1zZXJ2ZXIuc3RvcmU="),
 		b64("Y2xvdWQtc2VydmVyLnN0b3Jl"),
 		b64("Zmxhc2hzZXJ2ZS5zdG9yZQ=="),
 		b64("Y2hrYWN0aXZlLm9ubGluZQ=="),
+		// npm supply chain (axios/plain-crypto-js, 2026-03-31)
+		b64("c2ZyY2xhay5jb20="), // sfrclak.com
 	}
 }
 
@@ -176,6 +179,7 @@ var suspiciousPorts = map[string]string{
 	"31337": "common backdoor port",
 	"6667":  "IRC (sometimes C2)",
 	"6697":  "IRC/TLS",
+	"8000":  "common C2/staging port",
 	"9001":  "Tor",
 	"9050":  "Tor SOCKS",
 }
@@ -215,6 +219,25 @@ func isKnownSafe(process string) bool {
 	return false
 }
 
+// Temp directory prefixes where dropped payloads commonly execute from
+var tempPrefixes = []string{
+	"/tmp/",
+	"/private/tmp/",
+	"/private/var/",
+	"/var/folders/",
+}
+
+// isTempPath checks if a process path looks like it's running from a temp directory
+func isTempPath(process string) bool {
+	lower := strings.ToLower(process)
+	for _, prefix := range tempPrefixes {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func classifyConnection(c *Connection) {
 	// Check process name against known threat tools
 	for name, reason := range suspiciousProcs() {
@@ -236,6 +259,13 @@ func classifyConnection(c *Connection) {
 			c.Reason = "known C2 domain: " + c2
 			return
 		}
+	}
+
+	// Binary running from temp directory with outbound connection = high risk
+	if isTempPath(c.Process) && c.RemoteAddr != "" && c.RemoteAddr != "*:*" && c.State != "LISTEN" {
+		c.Risk = RiskHigh
+		c.Reason = "binary running from temp directory"
+		return
 	}
 
 	// Check for suspicious ports
